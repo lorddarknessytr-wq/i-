@@ -1,1 +1,1 @@
-{"job_id": "test1", "status": "done", "prompt_en": "An astronaut cat on the moon", "style": "auto", "model": "klein4b", "edit": false, "seed": 1402786812, "width": 512, "height": 512, "seconds": 545.4}
+{"job_id": "test1", "status": "error", "message": "منبع تصویر ورودی پشتیبانی نمی‌شود."}
