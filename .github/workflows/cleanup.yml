@@ -1,0 +1,23 @@
+name: cleanup-results
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reset results branch (drops old image history)
+        run: |
+          git checkout -q --orphan results-new
+          git rm -rq -f .
+          echo "results" > README.md
+          git add README.md
+          git -c user.name=ai-bot -c user.email=ai-bot@users.noreply.github.com commit -q -m "reset"
+          git push -f origin results-new:results

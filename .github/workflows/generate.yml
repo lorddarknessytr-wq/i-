@@ -1,0 +1,141 @@
+name: generate
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Prompt (Persian or English)"
+        required: true
+        type: string
+      job_id:
+        description: "Job id (web mode)"
+        required: false
+        default: ""
+        type: string
+      platform:
+        description: "web | telegram | rubika"
+        required: false
+        default: "web"
+        type: string
+      chat_id:
+        description: "Chat id (bots)"
+        required: false
+        default: ""
+        type: string
+      input_image:
+        description: "Input image for editing: gh:inputs/<file> or tg:<file_id>"
+        required: false
+        default: ""
+        type: string
+  repository_dispatch:
+    types: [generate]
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      # values go through env (not inline in scripts) so prompts can't inject shell code
+      PROMPT: ${{ github.event.inputs.prompt || github.event.client_payload.prompt }}
+      JOB_ID: ${{ github.event.inputs.job_id || github.event.client_payload.job_id }}
+      PLATFORM: ${{ github.event.inputs.platform || github.event.client_payload.platform || 'web' }}
+      CHAT_ID: ${{ github.event.inputs.chat_id || github.event.client_payload.chat_id }}
+      INPUT_IMAGE: ${{ github.event.inputs.input_image || github.event.client_payload.input_image }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      RUBIKA_BOT_TOKEN: ${{ secrets.RUBIKA_BOT_TOKEN }}
+      HF_HOME: ${{ github.workspace }}/.hf
+      SD_BIN: ${{ github.workspace }}/sdcpp-bin/sd-cli
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          pip install torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      # ---- stable-diffusion.cpp binary (built once, then cached) ----
+      - name: Restore sd.cpp binary
+        id: sdbin
+        uses: actions/cache/restore@v4
+        with:
+          path: sdcpp-bin
+          key: sdcpp-avx2-v1
+
+      - name: Build stable-diffusion.cpp
+        if: steps.sdbin.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          git clone --depth 1 --recursive https://github.com/leejet/stable-diffusion.cpp /tmp/sdcpp
+          cmake -S /tmp/sdcpp -B /tmp/sdcpp/build -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON
+          cmake --build /tmp/sdcpp/build --config Release -j"$(nproc)"
+          BIN=$(find /tmp/sdcpp/build -type f \( -name sd-cli -o -name sd \) -perm -u+x | head -n1)
+          echo "built: $BIN"
+          mkdir -p sdcpp-bin
+          cp "$BIN" sdcpp-bin/sd-cli
+          chmod +x sdcpp-bin/sd-cli
+          ./sdcpp-bin/sd-cli --help | head -n 5 || true
+
+      - name: Save sd.cpp binary
+        if: steps.sdbin.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: sdcpp-bin
+          key: sdcpp-avx2-v1
+
+      # ---- model weights (~7 GB, downloaded once, then cached) ----
+      - name: Restore models
+        id: models
+        uses: actions/cache/restore@v4
+        with:
+          path: models
+          key: models-${{ hashFiles('config.json') }}
+
+      - name: Download models
+        if: steps.models.outputs.cache-hit != 'true'
+        run: python -c "import json; from engine.sdcpp import ensure_models; ensure_models(json.load(open('config.json')))"
+
+      - name: Save models
+        if: steps.models.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: models
+          key: models-${{ hashFiles('config.json') }}
+
+      - name: Generate image
+        run: python -m engine.run
+
+      - name: Publish result (web mode)
+        if: always() && env.PLATFORM == 'web' && env.JOB_ID != ''
+        run: |
+          set -e
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$URL" results >/dev/null 2>&1; then
+            git clone --depth 1 --branch results "$URL" ../res
+          else
+            mkdir ../res && cd ../res && git init -q -b results && git remote add origin "$URL" && cd -
+          fi
+          cp out/* ../res/ 2>/dev/null || true
+          cd ../res
+          git config user.name "ai-bot"
+          git config user.email "ai-bot@users.noreply.github.com"
+          for ext in jpg json; do
+            ls -1 *.$ext 2>/dev/null | sort | head -n -200 | xargs -r rm -f
+          done
+          ls -1 inputs/* 2>/dev/null | sort | head -n -50 | xargs -r rm -f
+          git add -A
+          git commit -q -m "result ${JOB_ID}" || exit 0
+          for i in 1 2 3 4 5; do
+            git push -q origin HEAD:results && exit 0
+            git pull -q --rebase origin results || true
+            sleep 3
+          done
+          exit 1
