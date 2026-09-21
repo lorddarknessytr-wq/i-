@@ -1,0 +1,8 @@
+# torch (CPU) is installed separately in the workflow; used only for the Persian->English translator
+numpy<2
+transformers==4.46.3
+huggingface_hub==0.26.2
+sentencepiece
+protobuf
+pillow
+requests

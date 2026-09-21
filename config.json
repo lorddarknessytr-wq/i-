@@ -1,0 +1,9 @@
+{
+  "diffusion": {"repo": "leejet/FLUX.2-klein-4B-GGUF", "file": "flux-2-klein-4b-Q8_0.gguf"},
+  "llm": {"repo": "unsloth/Qwen3-4B-GGUF", "file": "Qwen3-4B-Q4_K_M.gguf"},
+  "vae": {"repo": "Comfy-Org/vae-text-encorder-for-flux-klein-4b", "file": "split_files/vae/flux2-vae.safetensors"},
+  "translator": "facebook/nllb-200-distilled-600M",
+  "steps": 4,
+  "max_prompt_chars": 500,
+  "timeout_min": 100
+}
